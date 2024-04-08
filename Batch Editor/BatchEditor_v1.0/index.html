@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<title>TestingJSX</title>
+	<script defer src="https://d3js.org/d3.v7.min.js"></script>
+	<script src="./lib/CSInterface.js"></script>
+	<script src="js/libs/jquery-2.0.2.min.js"></script>
+	<script src="js/themeManager.js"></script>
+	<script src="js/main.js"></script>
+	<script type="text/javascript">
+		/*--------------------------------------------------------------------------------------------*/
+		function runPathTree() {
+			var cs = new CSInterface;
+			cs.evalScript('$.runScript.PathTree()');
+		}
+
+		function runWalker() {
+			var cs = new CSInterface;
+			cs.evalScript("$.runScript.Walker()", function (treeData) {
+				//alert(treeData);
+				var resultDiv = document.getElementById('resultTree');
+				if (resultDiv) {
+					resultDiv.innerHTML = treeData;
+					reloadTree(createJSON(treeData));
+				}
+			});
+		}
+
+		function createJSON(inputData) {
+			var jsonObject = myJSONparse(inputData);
+			return jsonObject;
+
+		}
+
+		function myJSONparse(strData) {
+			var obj = {};
+
+			// Find the name
+			var indexNameStart = strData.indexOf("name") + 7;
+			var indexNameEnd = strData.indexOf('"', indexNameStart);
+			var name = strData.substring(indexNameStart, indexNameEnd);
+			obj.name = name;
+
+			// Find children
+			var indexChildrenStart = strData.indexOf("children");
+			if (indexChildrenStart !== -1) {
+				var indexChildrenEnd = strData.lastIndexOf("]");
+				var childrenStr = strData.substring(indexChildrenStart + 10, indexChildrenEnd + 1);
+
+				obj.children = [];
+				var index = 0;
+				var bracketCount = 0;
+				var subStrData = "";
+				while (index < childrenStr.length) {
+					if (childrenStr[index] === "{") {
+						bracketCount++;
+					} else if (childrenStr[index] === "}") {
+						bracketCount--;
+						if (bracketCount === 0) {
+							subStrData += childrenStr[index];
+							var childObj = myJSONparse(subStrData);
+							obj.children.push(childObj);
+							subStrData = "";
+						}
+					}
+					subStrData += childrenStr[index];
+					index++;
+				}
+			}
+			return obj;
+		}
+
+
+		function clearResultTree() {
+			var resultDiv = document.getElementById('resultTree');
+			if (resultDiv) {
+				resultDiv.innerHTML = '';
+			}
+		}
+
+		function submitFunction() {
+			// Get checkboxes and text input elements
+			var checkboxes = document.querySelectorAll('#batchWork input[type="checkbox"]');
+			var textInputs = document.querySelectorAll('#batchWork input[type="text"]');
+			// Prepare arrays to store checked checkboxes and text input values
+			var checkedCheckboxes = [];
+			var textInputValues = [];
+			// Loop through checkboxes to check if they are checked
+			checkboxes.forEach(function (checkbox) {
+				if (checkbox.checked) {
+					checkedCheckboxes.push(checkbox.id);
+				}
+			});
+			// Loop through text input boxes to get their values
+			textInputs.forEach(function (input) {
+				textInputValues.push(input.value);
+			});
+
+			var selectedOption = getSelectedOption();
+
+			if (selectedOption !== null) {
+				textInputValues.push(selectedOption)
+			}
+
+			var cs = new CSInterface;
+			var inputFound = cs.evalScript("$.runScript.findElement(app.project.rootItem, " + textInputValues[0] + ")");
+			if (inputFound!=0) {
+				cs.evalScript("$.runScript.Renamer(" + JSON.stringify(checkedCheckboxes) + ", " + JSON.stringify(textInputValues) + ")");
+				alert("Checked Checkboxes: " + checkedCheckboxes.join(", ") + "\nText Input Values: " + textInputValues.join(" transformed with "));
+			}
+
+		}
+
+		function getMeta() {
+			var textInput = JSON.stringify(document.querySelector('#textInput1').value);
+			var dropdownMenu = document.getElementById('dropdown-menu');
+
+			function changeOption(result, tag, optionNum) {
+				var optionToChange = dropdownMenu.querySelector('option[id="option' + optionNum + '"]');
+				var newVal = findSubstringInMeta(result, tag);
+				if (optionToChange) {
+					optionToChange.textContent = newVal; // Update the text content of the option
+					optionToChange.value = newVal; // Update the value attribute of the option
+				}
+			}
+
+			var cs = new CSInterface;
+			cs.evalScript("$.runScript.AlertMeta_getProjectMetadata(" + textInput + ")", function (result) {
+				changeOption(result, 'Intrinsic.MediaType>', "1");
+				changeOption(result, 'Intrinsic.MediaTimebase>', '2');
+				var alertContainer = document.getElementById('alertContainer1');
+				if (alertContainer) {
+					alertContainer.innerHTML = result + '<br>'
+					alertContainer.scrollTop = alertContainer.scrollHeight; // Auto-scroll to bottom
+				}
+
+			});
+			cs.evalScript("$.runScript.AlertMeta_getXMPMetadata(" + textInput + ")", function (result) {
+				changeOption(result, '<aux:Lens>', "3");
+				changeOption(result, '<crs:RawFileName>', "4");
+				changeOption(result, '<tiff:Model>', "5");
+				var alertContainer = document.getElementById('alertContainer2');
+				if (alertContainer) {
+					alertContainer.innerHTML = result + '<br>'
+					alertContainer.scrollTop = alertContainer.scrollHeight; // Auto-scroll to bottom
+				}
+
+			});
+		}
+
+		function findSubstringInMeta(inputString, prefix) {
+			// Find the index of prefix eg. "<aux:Lens>"
+			var startIndex = inputString.indexOf(prefix);
+			if (startIndex === -1) {
+				// "<aux:Lens>" not found
+				return null;
+			}
+
+			// Find the index of the next "<" after "<aux:Lens>"
+			var endIndex = inputString.indexOf("<", startIndex + prefix.length);
+			if (endIndex === -1) {
+				// "<" not found after "<aux:Lens>"
+				return null;
+			}
+
+			// Extract the substring between "<aux:Lens>" and the next "<"
+			var substring = inputString.substring(startIndex + prefix.length, endIndex);
+			return substring;
+		}
+
+		/*--------------------------------------------------------------------------------------------*/
+		var root;
+		function runTree(jsonData) {
+			// Select the SVG element or create one if it doesn't exist
+			var svgTree = d3.select("#treeBox svg");
+			if (svgTree.empty()) {
+				svgTree = d3.select("#treeBox").append("svg")
+					.attr("width", "100%")
+					.attr("height", 300)
+					.append("g")
+					.attr("transform", "translate(50,50)");
+			} else {
+				svgTree.selectAll("*").remove(); // Clear the existing SVG content
+			}
+
+			// Create the tree layout
+			var treeLayout = d3.tree().size([200, 200]);
+
+			// Create a hierarchy from the JSON data
+			root = d3.hierarchy(jsonData);
+
+			// Compute the layout for the tree
+			var treeData = treeLayout(root);
+
+			// Draw links between nodes
+			svgTree.selectAll(".link")
+				.data(treeData.links())
+				.enter().append("path")
+				.attr("class", "link")
+				.attr("d", function (d) {
+					return "M" + d.source.x + "," + d.source.y
+						+ "V" + d.target.y
+						+ "H" + d.target.x;
+				});
+
+			var node = svgTree.selectAll(".node")
+				.data(treeData.descendants())
+				.enter().append("g")
+				.attr("class", "node")
+				.attr("transform", function (d) {
+					return "translate(" + d.x + "," + d.y + ")";
+				});
+
+			var text = node.append("text")
+				.attr("dy", ".35em")
+				.attr("x", function (d) {
+					return d.children ? -13 : 13;
+				})
+				.style("text-anchor", function (d) {
+					return d.children ? "end" : "start";
+				})
+				.style("font-weight", "bold")
+				.style("font-family", "Arial, sans-serif")
+				.style("fill", "white")
+				.style("stroke", "black") // Add black border
+				.style("stroke-width", "0.5px") // Set border width
+				.text(function (d) {
+					return d.data.name;
+				});
+
+			// Insert circles to represent nodes
+			node.insert("circle", "text")
+				.attr("r", 5)
+
+			// Hide the text initially
+			text.style("opacity", 0);
+			// Show node name and hide circles on mouseover
+			// Show node name and hide circles on mouseover
+			// Show node name and hide circles on mouseover
+			node.on("mouseover", function (event, d) {
+				// Hide all circles
+				svgTree.selectAll("circle").style("opacity", 0);
+				// Show the text of the hovered node
+				d3.select(this).select("text").style("opacity", 1);
+			});
+
+			// Show circles and hide node name on mouseout
+			node.on("mouseout", function () {
+				// Show all circles
+				svgTree.selectAll("circle").style("opacity", 1);
+				// Hide all text
+				svgTree.selectAll("text").style("opacity", 0);
+			});
+
+
+
+
+
+			// Create text input box, highlight button, and clear button
+			var nodeInputBox = document.getElementById('nodeInputBox');
+			nodeInputBox.innerHTML = `
+        <input type="text" id="nodeNameInput" placeholder="Node Name">
+        <button id="highlightButton" onclick="highlightPath()">Highlight</button>
+        <button id="clearHighlightButton" onclick="clearInput()">Clear</button>
+    `;
+		}
+
+		function reloadTree(treeData) {
+			document.getElementById('treeBox').innerHTML = "";
+			runTree(treeData);
+		}
+
+		function clearTree() {
+			document.getElementById('bottomLeft').innerHTML = "";
+			document.getElementById('treeBox').innerHTML = "";
+			document.getElementById('nodeInputBox').innerHTML = "";
+		}
+
+		function highlightPath() {
+			var nodeName = document.getElementById("nodeNameInput").value;
+			var foundNode = findNode(root, nodeName);
+			var pathInfo = "";
+
+			if (foundNode) {
+				var ancestors = foundNode.ancestors().reverse(); // Reverse the ancestors array
+				ancestors.forEach(function (d) {
+					// Determine the type of node
+					var type = "";
+					if (d.depth === 0) {
+						type = ".prproj ROOT";
+					} else if (d.data.children) {
+						type = "BIN";
+					} else {
+						// Extract file extension/type
+						var fileName = d.data.name;
+						var fileType = fileName.split('.').pop();
+						type = fileType ? fileType : "File";
+					}
+					// Append formatted path information
+					pathInfo += type + ": " + d.data.name + " ->\n";
+				});
+
+				// Display path information in bottomLeft container
+				document.getElementById("bottomLeft").innerText = pathInfo;
+
+				// Draw highlighted path
+				drawLinksOver(foundNode);
+			} else {
+				alert("Node not found.");
+			}
+		}
+
+		function findNode(root, nodeName) {
+			var found = null;
+			root.each(function (d) {
+				if (d.data.name === nodeName) {
+					found = d;
+				}
+			});
+			return found;
+		}
+
+		function drawLinksOver(node) {
+			var ancestors = node.ancestors();
+			// Select the SVG element to append the highlighted path
+			var svg = d3.select("#treeBox svg");;
+			svg.selectAll(".highlighted-link").remove(); // Clear previous highlighted paths
+			ancestors.forEach(function (d, i) {
+				if (i > 0) {
+					svg.append("path")
+						.attr("class", "highlighted-link")
+						.attr("d", function () {
+							var sourceX = d.x + 50; // Add translation offset for X
+							var sourceY = d.y + 50; // Add translation offset for Y
+							var targetX = ancestors[i - 1].x + 50; // Add translation offset for X
+							var targetY = ancestors[i - 1].y + 50; // Add translation offset for Y
+							return "M" + sourceX + "," + sourceY +
+								"V" + targetY + "H" + targetX;
+						});
+				}
+			});
+		}
+
+		function clearInput() {
+			document.getElementById("nodeNameInput").value = "";
+			clearHighlightedPaths();
+		}
+
+		function clearHighlightedPaths() {
+			var svg = d3.select("#treeBox svg");
+			svg.selectAll(".highlighted-link").remove(); // Clear highlighted paths
+		}
+
+		function toggleBinContents() {
+			var checkbox = document.getElementById("All files in BIN");
+			var binContents = document.getElementById("binAlteredContents");
+
+			if (checkbox.checked) {
+				binContents.style.display = "block";
+				allSubsCheckbox.style.display = "block";
+			} else {
+				binContents.style.display = "none";
+				allSubsCheckbox.style.display = "none";
+			}
+		}
+
+		function getSelectedOption() {
+			var options = document.getElementsByName('switch-option');
+
+			for (var i = 0; i < options.length; i++) {
+				if (options[i].checked) {
+					return options[i].value;
+				}
+			}
+
+			return null; // Return null if no option is selected
+		}
+
+		document.addEventListener("DOMContentLoaded", function () {
+
+			var textInput1 = document.getElementById('textInput1');
+			var dropdownMenu = document.getElementById('dropdown-menu');
+			// Listen for changes in textInput1
+			textInput1.addEventListener('input', function () {
+				getMeta();
+			});
+
+			document.getElementById('dropdown-menu').addEventListener('change', function () {
+				var selectedOption = this.options[this.selectedIndex].text;
+				document.getElementById('textInput2').value = selectedOption;
+			});
+		});
+
+
+	</script>
+	<style>
+		body {
+			background-color: #262626;
+			color: #f5f5f5;
+			text-align: center;
+		}
+
+		input {
+			display: block;
+			margin: auto;
+			max-width: 100%;
+		}
+
+		button {
+			margin-top: 5px;
+			margin-right: 5px;
+			align-items: center;
+			text-align: center;
+			height: 25px;
+			width: 100px;
+			font-size: 14px;
+			line-height: 25px;
+			vertical-align: middle;
+			padding: 0;
+			border: none;
+			background-color: #585858;
+			color: #fff;
+			border-radius: 5px;
+			cursor: pointer;
+		}
+
+		#targetContainer {
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			/* Align items horizontally */
+			justify-content: center;
+			/* Center items vertically */
+			padding: 10px;
+		}
+
+		#topBox {
+			display: flex;
+			flex-direction: row;
+			align-items: center;
+			justify-content: space-between;
+			/* Align items to the start and end */
+			width: 100%;
+		}
+
+		#bottomBox {
+			display: flex;
+			flex-direction: row;
+			align-items: center;
+			/* Align items horizontally */
+			justify-content: center;
+			/* Center items vertically */
+			width: 100%;
+		}
+
+		#nodeInputBox {
+			display: flex;
+			flex-direction: row;
+			align-items: center;
+			/* Align items horizontally */
+			justify-content: center;
+			/* Center items vertically */
+			margin-left: auto;
+		}
+
+		#clearInputButton {
+			margin-right: 5px;
+			/* Add margin to the right of the button */
+		}
+
+		.node {
+			cursor: pointer;
+			color: #ccc;
+			fill: #ccc;
+		}
+
+		.link {
+			fill: none;
+			stroke: #ccc;
+			stroke-width: 1.5px;
+		}
+
+		.node-text {
+			color: #ccc;
+			font: 12px sans-serif;
+			font-weight: bold;
+			pointer-events: none;
+			text-shadow: -1px -1px 0 #333,
+				1px -1px 0 #333,
+				-1px 1px 0 #333,
+				1px 1px 0 #333;
+		}
+
+		#nodeNameInput {
+			margin-top: 5px;
+			padding: 2px;
+			border: 1px solid #ccc;
+			border-radius: 1px;
+			font-size: 12px;
+			color: #333;
+			width: 120px;
+		}
+
+		#nodeNameInput:focus {
+			outline: none;
+			/* Removes the default focus outline */
+			border-color: orange;
+			/* Change border color on focus */
+		}
+
+		#topLeft {
+			margin-left: 10px;
+			/* Add margin to the left */
+		}
+
+		#topRight {
+			margin-right: 10px;
+			/* Add margin to the right */
+		}
+
+		#bottomLeft {
+			color: orange;
+			font-weight: bold;
+			font-size: 14px;
+			text-align: left;
+			max-width: calc(100% - 20px);
+			padding: 10px;
+			/* Add padding for better appearance */
+			overflow: auto;
+		}
+
+		#bottomRight {
+			display: flex;
+			flex-direction: column;
+			align-items: flex-start;
+			/* Align items to the start */
+			overflow: auto;
+		}
+
+		#treeBox {
+			margin-right: auto;
+			overflow: auto;
+		}
+
+
+
+		.highlighted {
+			fill: orange;
+		}
+
+		.highlighted-link {
+			fill: none;
+			stroke: orange;
+			stroke-width: 2px;
+		}
+
+		#targetContainer,
+		#topBox,
+		#topLeft,
+		#topRight,
+		#bottomBox,
+		#bottomRight,
+		#treeBox,
+		#nodeInputBox {
+			border-radius: 20px;
+			/*rounds outline edges*/
+			background-color: #333;
+		}
+
+		/*--------------------------------------------------------------------------------------------*/
+		#buttonHouse {
+			margin-top: 20px;
+			padding: 10px;
+			color: #fff;
+			border-radius: 5px;
+			display: flex;
+			align-items: flex-start;
+		}
+
+		#resultTree {
+			margin-top: 20px;
+			padding: 10px;
+			background-color: #333;
+			color: #fff;
+			border-radius: 5px;
+		}
+
+		#batchWork {
+			margin-top: 20px;
+			padding: 10px;
+			background-color: #333;
+			color: #fff;
+			border-radius: 5px;
+			display: flex;
+			align-items: flex-start;
+		}
+
+		#inputContainer {
+			display: flex;
+			flex-direction: column;
+			/* Change flex direction to horizontal */
+			justify-content: flex-end;
+			/* Align items to the right */
+			margin-left: 20px;
+		}
+
+		#textInput1,
+		#textInput2 {
+			display: block;
+			margin-top: 5px;
+			width: 100%;
+			height: 15px;
+			padding: 5px;
+			box-sizing: border-box;
+		}
+
+		#dropdown-menu {
+			display: block;
+			margin-top: 5px;
+			width: 100%;
+			height: 25px;
+			padding: 2px;
+			box-sizing: border-box;
+		}
+
+		#submitButton {
+			margin-top: 5px;
+			align-items: center;
+			text-align: center;
+			height: 25px;
+			width: 100px;
+			font-size: 14px;
+			line-height: 25px;
+			vertical-align: middle;
+			padding: 0;
+			border: none;
+			background-color: #585858;
+			color: #fff;
+			border-radius: 5px;
+			cursor: pointer;
+		}
+
+		#clearButton {
+			margin-top: 5px;
+			align-items: center;
+			text-align: center;
+			height: 25px;
+			width: 100px;
+			font-size: 14px;
+			line-height: 25px;
+			vertical-align: middle;
+			padding: 0;
+			border: none;
+			background-color: #d9534f;
+			/* Button background color */
+			color: #fff;
+			/* Text color */
+			border-radius: 5px;
+			cursor: pointer;
+		}
+
+		#resultTree,
+		#buttonHouse,
+		#batchWork,
+		#targetContainer {
+			margin: 20px;
+			width: calc(100%-40px);
+		}
+
+		#inputContainer {
+			margin-bottom: 10px;
+		}
+
+		#checkboxContainer input[type="checkbox"] {
+			margin-left: 0;
+			margin-right: 5px;
+		}
+
+		#checkboxContainer label {
+			display: flex;
+			align-items: center;
+			margin-bottom: 5px;
+		}
+
+		#checkboxContainer {
+			display: block;
+			margin-left: 0;
+			text-align: left;
+			margin-bottom: 10px;
+		}
+
+		#binAlteredContents label {
+			display: flex;
+			align-items: center;
+			margin-bottom: 5px;
+
+		}
+
+		#binAlteredContents input[type="radio"] {
+			margin-left: 0;
+			margin-right: 5px;
+		}
+
+		#binAlteredContents {
+			padding: 10px;
+			display: block;
+			margin-left: 0;
+			text-align: left;
+		}
+
+		.alert-container {
+			overflow-y: auto;
+			/* Enable vertical scrolling */
+			max-height: 200px;
+			/* Set maximum height for the container */
+			padding: 10px;
+			/* Add padding for better appearance */
+			background-color: #333;
+			color: #fff;
+			border-radius: 5px;
+			margin-top: 10px;
+		}
+
+		/*--------------------------------------------------------------------------------------------*/
+	</style>
+</head>
+
+<body onLoad="onLoaded()">
+	<!-- /*--------------------------------------------------------------------------------------------*/ -->
+	<div id="buttonHouse">
+		<button id="pathTreeButton" type="button" onclick="runPathTree()">Run PathTree</button>
+		<button id="metaButton" type="button" onclick="getMeta()">metaData</button>
+	</div>
+	<div id="resultTree"></div> <!-- Container for displaying results -->
+	<button id="clearButton" onclick="clearResultTree()">Clear Result</button>
+	<div id="batchWork">
+		<div id="checkboxContainer">
+			<label><input type="checkbox" id="All files in BIN" onchange="toggleBinContents()">Target BIN
+				contents</label>
+			<div id="binAlteredContents" style="display: none;">
+				<label><input type="radio" name="switch-option" value="loose">alter loose files</label>
+				<label><input type="radio" name="switch-option" value="BINs">alter BINs</label>
+				<label><input type="radio" name="switch-option" value="all">alter all contents</label>
+				<label><input type="checkbox" id="allSubsCheckbox" value="all">effect subdirectories</label>
+			</div>
+			<label><input type="checkbox" id="Include BIN"> Include target</label>
+			<label><input type="checkbox" id="Append (alternative to rename)"> Append (alternative to rename)</label>
+		</div>
+
+		<div id="inputContainer">
+			<input type="text" id="textInput1" name="batch_input" placeholder="Target Item">
+			<input type="text" id="textInput2" name="batch_input" placeholder="Rename/Append">
+			<button id="submitButton" onclick="submitFunction()">Submit</button>
+			<select id="dropdown-menu">
+				<option value="" disabled selected>meta Autofill</option>
+				<optgroup label="meta data:">
+					<option id="option1" value="option1">Option 1</option>
+					<option id="option2" value="option2">Option 2</option>
+				</optgroup>
+				<optgroup label="XMP meta data:">
+					<option id="option3" value="option3">Option 3</option>
+					<option id="option4" value="option4">Option 4</option>
+					<option id="option5" value="option5">Option 5</option>
+				</optgroup>
+			</select>
+		</div>
+	</div>
+	<!-- /*--------------------------------------------------------------------------------------------*/ -->
+	<div id="targetContainer">
+		<div id="topBox">
+			<div id="topLeft">
+				<button id="runButton" type="run" onclick="runWalker()">Load Tree</button>
+			</div>
+			<div id="topRight">
+				<button id="clearTree" type="run" onclick="clearTree()">X</button>
+			</div>
+		</div>
+		<div id="bottomBox">
+			<div id="bottomLeft"></div>
+			<div id="bottomRight">
+				<div id="treeBox"></div>
+				<div id="nodeInputBox"></div>
+			</div>
+		</div>
+	</div>
+	<div class="alert-container" id="alertContainer1"></div>
+	<div class="alert-container" id="alertContainer2"></div>
+</body>
+
+</html>
