@@ -6,12 +6,14 @@
 - **Layers**
 
 
+
 **Batch Editor**
 Intended Features:
 
-*Live Path Tree
-*Batch Name Alterations
-*Meta Data
+-Live Path Tree
+-Batch Name Alterations
+-Meta Data
+
 
 **Video Masking**
 Intended Features:
